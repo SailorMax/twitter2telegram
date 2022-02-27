@@ -2,6 +2,7 @@
 !.gitignore
 !.pylintrc
 !.github
+!.env.skel
 
 *.pyc
 settings.env
