@@ -29,4 +29,10 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
       - name: Run transfer script
+        env:
+          TWITTER_CHANNEL_NAME: ${{ secrets.TWITTER_CHANNEL_NAME }}
+          TWITTER_BEARER: ${{ secrets.TWITTER_BEARER }}
+          TELEGRAM_BOT_NAME: ${{ secrets.TELEGRAM_BOT_NAME }}
+          TELEGRAM_CHANNEL_NAME: ${{ secrets.TELEGRAM_CHANNEL_NAME }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
         run: python3 twitter2telegram.py
