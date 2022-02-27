@@ -1,0 +1,6 @@
+\.*
+!.gitignore
+!.pylintrc
+
+*.pyc
+settings.env
