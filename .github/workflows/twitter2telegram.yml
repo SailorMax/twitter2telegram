@@ -4,7 +4,7 @@ name: Transfer newest tweets to Telegram
 # events but only for the master branch OR schedule cron
 on:
   schedule:
-  - cron: '0,5,10,15,20,25,30,35,40,45,50,55 * * * *'
+  - cron: '0 * * * *'
 
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
