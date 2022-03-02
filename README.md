@@ -1,6 +1,6 @@
 # Twitter to Telegram
 
-Transfer tweets from one Twitter channel to Telegram channel. Example of the result you can found [here](https://t.me/w_humor_mirror).
+Copy tweets from one Twitter channel to Telegram channel. Example of the result you can found [here](https://t.me/w_humor_mirror).
 
 ## Peculiarities
 - work via Twitter API v2 (Essential mode)
@@ -19,7 +19,7 @@ After start usage do not delete `[#!n82an48]`-like ID from target Telegram chann
 ```sh
 $ pip3 install -r requirements.txt
 $ python3 twitter2telegram.py
-# or `python3 repeater.py 60` to make transfer each 60 minutes
+# or `python3 repeater.py 60` to copy new tweets each 60 minutes
 ```
 
 ## Deploying to Heroku
