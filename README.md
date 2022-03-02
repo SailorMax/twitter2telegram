@@ -1,6 +1,6 @@
 # Twitter to Telegram
 
-Transfer tweets from one Twitter channel to Telegram chat
+Transfer tweets from one Twitter channel to Telegram channel. Example of the result you can found [here](https://t.me/w_humor_mirror).
 
 ## Peculiarities
 - work via Twitter API v2 (Essential mode)
@@ -8,7 +8,7 @@ Transfer tweets from one Twitter channel to Telegram chat
 - standalone solution
 
 ## Warning
-After start usage do not delete `[#!n82an48]`-like ID from target Telegram chat description! By this ID the script track last imported tweet. If you remove it, import starts "from begin" (100 last tweets).
+After start usage do not delete `[#!n82an48]`-like ID from target Telegram channel description! By this ID the script track last imported tweet. If you remove it, import starts "from begin" (100 last tweets).
 
 ## Guide
 1. Get Twitter API Bearer Token from [here](https://developer.twitter.com/)
