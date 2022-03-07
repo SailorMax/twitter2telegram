@@ -266,46 +266,57 @@ class TelegramClient():
         Post new messages
         """
         for message in new_messages_list:
+            link_to_tweet = "[<a href='"+message["tweet_url"]+"'>tweet</a>]"
+
             # get text
             message_text = ""
             if message["text"] is not None:
                 message_text = message["text"] + "\n\n"
             elif len(message["attachments"]) == 0:
-                message_text = message["tweet_url"]
+                message_text = link_to_tweet
 
             # add link to original
-            if message_text != message["tweet_url"]:
-                message_text = message_text + "[<a href='"+message["tweet_url"]+"'>tweet</a>]"
+            if message_text != link_to_tweet:
+                message_text = message_text + link_to_tweet
 
             # if message exceeds max length of caption => use only link
             if len(message_text.encode('UTF-8')) > 1024:
-                message_text = message["tweet_url"]
+                message_text = link_to_tweet
 
             # send message
             # https://python-telegram-bot.readthedocs.io/en/stable/telegram.bot.html#telegram.Bot.send_message
-            if len(message["attachments"]) == 1:
-                attach = message["attachments"][0]
-                match attach["type"]:
-                    case "photo":
-                        self.client_bot.send_photo(chat_id=self.chat_id, photo=attach["url"], caption=message_text, parse_mode="HTML", timeout=TELEGRAM_TIMEOUT)
-                    case "animated_gif":
-                        self.client_bot.send_animation(chat_id=self.chat_id, animation=attach["url"], caption=message_text, parse_mode="HTML", timeout=TELEGRAM_TIMEOUT)
-                    case "video":
-                        self.client_bot.send_video(chat_id=self.chat_id, video=attach["url"], caption=message_text, parse_mode="HTML", timeout=TELEGRAM_TIMEOUT)
-                    case "audio":
-                        self.client_bot.send_audio(chat_id=self.chat_id, audio=attach["url"], caption=message_text, parse_mode="HTML", timeout=TELEGRAM_TIMEOUT)
-            elif len(message["attachments"]) > 1:
-                media_list = []
-                for attach in message["attachments"]:
-                    caption = None
-                    if len(media_list) == 0:        # groups uses caption of first object
-                        caption = message_text
-                    media = self.get_media_by_attachment(attach, caption)
-                    if media is not None:
-                        media_list.append( media )
-                self.client_bot.send_media_group(chat_id=self.chat_id, media=media_list, timeout=TELEGRAM_TIMEOUT )
-            else:
-                self.client_bot.send_message(chat_id=self.chat_id, text=message_text, parse_mode="HTML", timeout=TELEGRAM_TIMEOUT )
+            try:
+                if len(message["attachments"]) == 1:
+                    attach = message["attachments"][0]
+                    match attach["type"]:
+                        case "photo":
+                            self.client_bot.send_photo(chat_id=self.chat_id, photo=attach["url"], caption=message_text, parse_mode="HTML", timeout=TELEGRAM_TIMEOUT)
+                        case "animated_gif":
+                            self.client_bot.send_animation(chat_id=self.chat_id, animation=attach["url"], caption=message_text, parse_mode="HTML", timeout=TELEGRAM_TIMEOUT)
+                        case "video":
+                            self.client_bot.send_video(chat_id=self.chat_id, video=attach["url"], caption=message_text, parse_mode="HTML", timeout=TELEGRAM_TIMEOUT)
+                        case "audio":
+                            self.client_bot.send_audio(chat_id=self.chat_id, audio=attach["url"], caption=message_text, parse_mode="HTML", timeout=TELEGRAM_TIMEOUT)
+
+                elif len(message["attachments"]) > 1:
+                    media_list = []
+                    for attach in message["attachments"]:
+                        caption = None
+                        if len(media_list) == 0:        # groups uses caption of first object
+                            caption = message_text
+                        media = self.get_media_by_attachment(attach, caption)
+                        if media is not None:
+                            media_list.append( media )
+                    self.client_bot.send_media_group(chat_id=self.chat_id, media=media_list, timeout=TELEGRAM_TIMEOUT )
+
+                else:
+                    self.client_bot.send_message(chat_id=self.chat_id, text=message_text, parse_mode="HTML", timeout=TELEGRAM_TIMEOUT )
+
+            except telegram.error.TelegramError as err:
+                # some media doesn't support by Telegram => post only link
+                logging.info("(!) Telegram doesn't accept the message: %s", err)
+                logging.info("Trying to post only link...")
+                self.client_bot.send_message(chat_id=self.chat_id, text=link_to_tweet, parse_mode="HTML", timeout=TELEGRAM_TIMEOUT )
 
             logging.info("Published tweet: %s", message["tweet_url"])
             self.update_id_in_chat_description(message["id"])
