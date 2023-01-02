@@ -8,6 +8,7 @@ import re
 import hashlib
 import base64
 import logging
+import asyncio
 from dotenv import load_dotenv
 import tweepy
 import telegram
@@ -15,7 +16,8 @@ import telegram
 # settings
 CHECK_NEW_TWEETS_IN_LAST_X_DAYS = 30
 LIMIT_NEW_TWEETS = 100    # Twitter allow 5-100
-TWEET_URL_PATTERN = "https://twitter.com/{user_name}/status/{tweet_id}"
+TWITTER_URL = "https://twitter.com/"
+TWEET_URL_PATTERN = TWITTER_URL + "{user_name}/status/{tweet_id}"
 
 TELEGRAM_CHECK_LAST_POSTS = 20  # search last imported tweet
 TELEGRAM_TIMEOUT = 20    # seconds
@@ -26,6 +28,7 @@ if os.getenv("GITHUB_ACTION") or os.getenv("DYNO"):
     logging.basicConfig(format='> %(message)s', level=logging.INFO)
 else:
     logging.basicConfig(format='%(asctime)s > %(message)s', level=logging.INFO)
+
 
 def import_settings():
     """
@@ -56,7 +59,6 @@ class TwitterClient():
         self.user_id = user_obj.data.id
         logging.info("Twitter channel found (%s)", channel_name)
 
-
     def get_new_tweet_item(self, tweet, text, attaches):
         """
         Prepare new tweet item from export
@@ -77,7 +79,11 @@ class TwitterClient():
         media_dic = {}
         if len(tweets_includes) > 0 and len(tweets_includes["media"]) > 0:
             for media in tweets_includes["media"]:
-                media_dic[ media.media_key ] = {"url":media.url, "alt":media.alt_text, "type":media.type}
+                media_dic[media.media_key] = {
+                                                "url": media.url,
+                                                "alt": media.alt_text,
+                                                "type": media.type
+                                                }
 
         # collect normalized tweets
         result_list = []
@@ -98,13 +104,13 @@ class TwitterClient():
             # tweets with internal media (twitter's photo or video)
             if exportable_post is False:
                 new_tweet_item = self.get_new_tweet_item(tweet, None, [])
-                result_list.append( new_tweet_item )
+                result_list.append(new_tweet_item)
                 continue
 
             # clear text from attachment urls
             tweet_text = tweet.text
             if tweet.entities is not None and "urls" in tweet.entities and len(tweet.entities["urls"]):
-                urls2cut = list(filter(lambda x: x["expanded_url"].find("https://twitter.com/") == 0, tweet.entities["urls"]))   # cut only twitter urls!
+                urls2cut = list(filter(lambda x: x["expanded_url"].find(TWITTER_URL) == 0, tweet.entities["urls"]))   # cut only twitter urls!
                 urls2cut.sort(key=lambda x: x["start"], reverse=True)   # prepare replaces list in desc order
                 for url2cut in urls2cut:
                     if len(tweet_text) > url2cut["start"]:
@@ -112,17 +118,16 @@ class TwitterClient():
 
             # store normalized tweet
             new_tweet_item = self.get_new_tweet_item(tweet, tweet_text.strip(), tweet_attachments)
-            result_list.append( new_tweet_item )
+            result_list.append(new_tweet_item)
 
         return result_list
-
 
     def get_newest_tweets(self, last_used_tweet_uid_hash):
         """
         Get newest posts, which is after `last_used_uid`
         """
         current_ts = datetime.datetime.utcnow()
-        x_days = datetime.timedelta(days = CHECK_NEW_TWEETS_IN_LAST_X_DAYS)
+        x_days = datetime.timedelta(days=CHECK_NEW_TWEETS_IN_LAST_X_DAYS)
         start_time = (current_ts - x_days).isoformat(timespec="seconds") + "Z"
         # https://docs.tweepy.org/en/stable/client.html#tweepy.Client.get_users_tweets
         latest_tweets = self.client_api.get_users_tweets(
@@ -150,7 +155,6 @@ class TwitterClient():
         return result_list
 
 
-
 ##################################################################
 class TelegramClient():
     """
@@ -158,8 +162,9 @@ class TelegramClient():
     """
     client_bot = None
     chat_name = None
-    chat_id = None
     chat = None
+    chat_id = None
+    chat_description = None
 
     id_in_descr_pattern = re.compile(r" \[\#\!([-0-9a-zA-Z\._]+)\]$")
 
@@ -170,20 +175,28 @@ class TelegramClient():
         self.client_bot = telegram.Bot(access_token)
         self.chat_name = channel_name
 
-        # https://python-telegram-bot.readthedocs.io/en/stable/telegram.bot.html#telegram.Bot.get_chat
-        self.chat = self.get_chat(self.chat_name)
-        self.chat_id = self.chat.id
+    async def init(self):
+        await self.get_chat(self.chat_name)
         logging.info("Telegram chat found (%s)", self.chat_name)
 
-        self.update_id_in_chat_description(0)
-        logging.info("Telegram chat description is editable (%s)", self.chat.description)
+        await self.update_id_in_chat_description(0)
+        logging.info("Telegram chat description is editable (%s)", self.chat_description)
 
-
-    def get_chat(self, name):
+    async def get_chat(self, name):
         """
         Return chat object
         """
-        return self.client_bot.get_chat(chat_id="@"+name, timeout=TELEGRAM_TIMEOUT)
+        # https://python-telegram-bot.readthedocs.io/en/stable/telegram.bot.html#telegram.Bot.get_chat
+        self.chat = await self.client_bot.get_chat(
+                                            chat_id="@"+name,
+                                            read_timeout=TELEGRAM_TIMEOUT,
+                                            write_timeout=TELEGRAM_TIMEOUT,
+                                            connect_timeout=TELEGRAM_TIMEOUT,
+                                            pool_timeout=TELEGRAM_TIMEOUT
+                                            )
+        self.chat_id = self.chat.id
+        self.chat_description = self.chat.description
+        return self.chat
 
     @staticmethod
     def get_hash_of_id(msg_id):
@@ -193,7 +206,6 @@ class TelegramClient():
         """
         return base64.urlsafe_b64encode(hashlib.sha256(str(msg_id).encode("utf8")).digest()).decode()[:8]
 
-
     @staticmethod
     def compare_hash_with_id(hash_id, check_id):
         """
@@ -202,37 +214,35 @@ class TelegramClient():
         """
         return hash_id == TelegramClient.get_hash_of_id(check_id)
 
-
-    def update_id_in_chat_description(self, msg_id):
+    async def update_id_in_chat_description(self, msg_id):
         """
         Store last used tweet ID in description of chat
         """
         # remove old number
-        new_description = re.sub(self.id_in_descr_pattern, "", self.chat.description)
+        new_description = re.sub(self.id_in_descr_pattern, "", self.chat_description)
 
         # do not update description on Zero if we already has number in description (require only on first run)
-        if msg_id == 0 and new_description != self.chat.description:
+        if msg_id == 0 and new_description != self.chat_description:
             return
 
         id_hash = self.get_hash_of_id(msg_id)
         new_description = new_description + " [#!" + id_hash + "]"
 
         # https://python-telegram-bot.readthedocs.io/en/stable/telegram.bot.html#telegram.Bot.set_chat_description
-        self.client_bot.set_chat_description(chat_id=self.chat_id, description=new_description, timeout=TELEGRAM_TIMEOUT)
-        self.chat.description = new_description
+        await self.client_bot.set_chat_description(chat_id=self.chat_id, description=new_description, read_timeout=TELEGRAM_TIMEOUT, write_timeout=TELEGRAM_TIMEOUT)
+        self.chat_description = new_description
         logging.info("Stored last_posted_message_id: [#!%s]", id_hash)
 
-
-    def get_last_imported_msg_id_hash(self):
+    async def get_last_imported_msg_id_hash(self):
         """
         Get last used message ID from telegram channel
         """
         msg_uid = None
 
         # search last used message ID in channel description
-        self.chat = self.get_chat(self.chat_name)   # re-read for better dynamic
-        if self.chat.description is not None:
-            match = self.id_in_descr_pattern.search(self.chat.description)
+        await self.get_chat(self.chat_name)   # re-read for better dynamic
+        if self.chat_description is not None:
+            match = self.id_in_descr_pattern.search(self.chat_description)
             if match is not None:
                 msg_uid = match.group(1)
 
@@ -241,7 +251,6 @@ class TelegramClient():
         else:
             logging.info("Last imported message ID = %s", msg_uid)
         return msg_uid
-
 
     @staticmethod
     def get_media_by_attachment(attachment, caption):
@@ -260,8 +269,7 @@ class TelegramClient():
                 return telegram.InputMediaVideo(media=attachment["url"], caption=caption, parse_mode="HTML")
         return None
 
-
-    def post_new_messages(self, new_messages_list):
+    async def post_new_messages(self, new_messages_list):
         """
         Post new messages
         """
@@ -290,13 +298,13 @@ class TelegramClient():
                     attach = message["attachments"][0]
                     match attach["type"]:
                         case "photo":
-                            self.client_bot.send_photo(chat_id=self.chat_id, photo=attach["url"], caption=message_text, parse_mode="HTML", timeout=TELEGRAM_TIMEOUT)
+                            await self.client_bot.send_photo(chat_id=self.chat_id, photo=attach["url"], caption=message_text, parse_mode="HTML", write_timeout=TELEGRAM_TIMEOUT)
                         case "animated_gif":
-                            self.client_bot.send_animation(chat_id=self.chat_id, animation=attach["url"], caption=message_text, parse_mode="HTML", timeout=TELEGRAM_TIMEOUT)
+                            await self.client_bot.send_animation(chat_id=self.chat_id, animation=attach["url"], caption=message_text, parse_mode="HTML", write_timeout=TELEGRAM_TIMEOUT)
                         case "video":
-                            self.client_bot.send_video(chat_id=self.chat_id, video=attach["url"], caption=message_text, parse_mode="HTML", timeout=TELEGRAM_TIMEOUT)
+                            await self.client_bot.send_video(chat_id=self.chat_id, video=attach["url"], caption=message_text, parse_mode="HTML", write_timeout=TELEGRAM_TIMEOUT)
                         case "audio":
-                            self.client_bot.send_audio(chat_id=self.chat_id, audio=attach["url"], caption=message_text, parse_mode="HTML", timeout=TELEGRAM_TIMEOUT)
+                            await self.client_bot.send_audio(chat_id=self.chat_id, audio=attach["url"], caption=message_text, parse_mode="HTML", write_timeout=TELEGRAM_TIMEOUT)
 
                 elif len(message["attachments"]) > 1:
                     media_list = []
@@ -306,39 +314,39 @@ class TelegramClient():
                             caption = message_text
                         media = self.get_media_by_attachment(attach, caption)
                         if media is not None:
-                            media_list.append( media )
-                    self.client_bot.send_media_group(chat_id=self.chat_id, media=media_list, timeout=TELEGRAM_TIMEOUT )
+                            media_list.append(media)
+                    await self.client_bot.send_media_group(chat_id=self.chat_id, media=media_list, write_timeout=TELEGRAM_TIMEOUT)
 
                 else:
-                    self.client_bot.send_message(chat_id=self.chat_id, text=message_text, parse_mode="HTML", timeout=TELEGRAM_TIMEOUT )
+                    await self.client_bot.send_message(chat_id=self.chat_id, text=message_text, parse_mode="HTML", write_timeout=TELEGRAM_TIMEOUT)
 
             except telegram.error.TelegramError as err:
                 # some media doesn't support by Telegram => post only link
                 logging.info("(!) Telegram doesn't accept the message: %s", err)
                 logging.info("Trying to post only link...")
-                self.client_bot.send_message(chat_id=self.chat_id, text=link_to_tweet, parse_mode="HTML", timeout=TELEGRAM_TIMEOUT )
+                await self.client_bot.send_message(chat_id=self.chat_id, text=link_to_tweet, parse_mode="HTML", write_timeout=TELEGRAM_TIMEOUT)
 
             logging.info("Published tweet: %s", message["tweet_url"])
-            self.update_id_in_chat_description(message["id"])
+            await self.update_id_in_chat_description(message["id"])
             time.sleep(TELEGRAM_POST_PAUSE)
 
 
-
 ##################################################################
-# init
-import_settings()
-twitter_client = TwitterClient(os.getenv("TWITTER_BEARER"), os.getenv("TWITTER_CHANNEL_NAME"))
-telegram_client = TelegramClient(os.getenv("TELEGRAM_TOKEN"), os.getenv("TELEGRAM_CHANNEL_NAME"))
-
-def transfer_newest_tweets():
+async def transfer_newest_tweets():
     """
     Transfer newest tweets. Selection by last imported tweet id.
     """
-    last_used_post_uid_hash = telegram_client.get_last_imported_msg_id_hash()
+    twitter_client = TwitterClient(os.getenv("TWITTER_BEARER"), os.getenv("TWITTER_CHANNEL_NAME"))
+    telegram_client = TelegramClient(os.getenv("TELEGRAM_TOKEN"), os.getenv("TELEGRAM_CHANNEL_NAME"))
+    await telegram_client.init()
+
+    last_used_post_uid_hash = await telegram_client.get_last_imported_msg_id_hash()
     newest_tweets = twitter_client.get_newest_tweets(last_used_post_uid_hash)
-    telegram_client.post_new_messages(newest_tweets)
+    await telegram_client.post_new_messages(newest_tweets)
+
 
 # run transfer if script was executed direcly
 if __name__ == "__main__":
-    transfer_newest_tweets()
+    import_settings()
+    asyncio.run(transfer_newest_tweets())
 # when script is used as module let user call it where required

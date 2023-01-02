@@ -2,6 +2,8 @@
 !.gitignore
 !.pylintrc
 !.github
+!.editorconfig
+!.flake8
 !.env.skel
 
 *.pyc
